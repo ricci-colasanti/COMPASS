@@ -50,7 +50,7 @@ func initializeRNG(config AnnealingConfig, numWorkers int) []*rand.Rand {
 func parallelRun(constraints []ConstraintData, groups []int, microData []MicroData, weights []float64, microdataHeader []string, outputfile1 string, outputfile2 string, config AnnealingConfig, updates chan<- UIUpdate) error {
 	// Dynamic worker count - use either CPU count or constraint count, whichever is smaller
 	fitness := make([]float64, 0, len(microData))
-	fmt.Println(groups)
+	//fmt.Println(groups)
 	maxGroup := groups[0]
 	for _, value := range groups[1:] {
 		if value > maxGroup {

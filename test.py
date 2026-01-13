@@ -12,10 +12,11 @@ from pathlib import Path
 # 1️  Build the payload (mirrors the Go structs)
 # ----------------------------------------------------------------------
 payload = {
-    "constraints": "data/BlockLand/artifical_plus_ni_cencus.csv",
-    "microdata":   "data/BlockLand/artifical_plus_ni_hh_survay.csv",
-    "output":      "results/artificial_synthetic_population.csv",
-    "validate":    "results/artificial_synthPopSurvey.csv",
+    "constraints" : "data/BlockWorld/artifical_cencus.csv",
+    "microdata"   : "data/BlockWorld/artifical_survay.csv",
+    "groups"      : "data/BlockWorld/artificial_groups.csv",
+    "output"      : "results/artificial_synthetic_population.csv",
+    "validate"    : "results/artificial_synthPopSurvey.csv",
     "initialTemp":      1000.0,
     "minTemp":          0.001,
     "coolingRate":      0.997,
@@ -39,7 +40,7 @@ json_in = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
 # 3️  Locate the compiled Go binary
 # ----------------------------------------------------------------------
 # By default we assume it lives next to this script (./compass)
-binary = "./compass"
+binary = "./COMPASS"
 
 
 

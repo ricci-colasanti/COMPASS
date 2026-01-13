@@ -1,7 +1,7 @@
 {
-  "constraints" : "data/BlockLand/artifical_cencus.csv",
-  "microdata"   : "data/BlockLand/artifical_hh_survay.csv",
-  "groups"      : "data/BlockLand/artificial_groups.csv",
+  "constraints" : "data/BlockWorld/artifical_cencus.csv",
+  "microdata"   : "data/BlockWorld/artifical_survay.csv",
+  "groups"      : "data/BlockWorld/artificial_groups.csv",
   "output"      : "results/artificial_synthetic_population.csv",
   "validate"    : "results/artificial_synthPopSurvey.csv",
   "initialTemp"      : 1000.0,
