@@ -1,6 +1,6 @@
 {
   "constraints" : "data/BlockWorld/artifical_cencus.csv",
-  "microdata"   : "data/BlockWorld/artifical_survay.csv",
+  "microdata"   : "data/BlockWorld/artifical_survey.csv",
   "groups"      : "data/BlockWorld/artificial_groups.csv",
   "output"      : "results/artificial_synthetic_population.csv",
   "validate"    : "results/artificial_synthPopSurvey.csv",
