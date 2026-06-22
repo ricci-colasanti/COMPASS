@@ -1,4 +1,4 @@
-# COMPASS - UK Spatial Synthetic Population Generator  
+# COMPASS - UK Spatial Synthetic Population Generator  **Development Branch**
 **Work in Progress - Not Ready for Production Use**  
 
 *This is a research/experimental project for generating UK spatial synthetic populations.  
