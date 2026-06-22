@@ -8,10 +8,18 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
 
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/widget"
 	"golang.org/x/term"
 )
 
@@ -36,8 +44,8 @@ type Config struct {
 	WindowSize       int     `json:"windowSize"`
 	Change           int     `json:"change"`
 	Distance         string  `json:"distance"`
-	UseRandomSeed    string  `json:"useRandomSeed"` // "yes"/"no"
-	RandomSeed       int     `json:"randomSeed"`    // integer seed
+	UseRandomSeed    string  `json:"useRandomSeed"`
+	RandomSeed       int     `json:"randomSeed"`
 }
 
 type AnnealingConfig struct {
@@ -52,22 +60,25 @@ type AnnealingConfig struct {
 	Change           int     `json:"change"`
 	Distance         string  `json:"distance"`
 	UseRandomSeed    string  `json:"useRandomSeed"`
-	RandomSeed       int     `json:"randomSeed,omitempty"` // optional
+	RandomSeed       int     `json:"randomSeed,omitempty"`
 }
 
 type WeightsData struct {
 	ID     string
 	Values []float64
 }
+
 type MicroData struct {
 	ID     string
 	Values []float64
 }
+
 type ConstraintData struct {
 	ID     string
 	Values []float64
 	Total  float64
 }
+
 type results struct {
 	area              string
 	population        float64
@@ -77,31 +88,16 @@ type results struct {
 	fitness           float64
 }
 
-/* UIUpdate – messages that the core algorithm can push back */
 type UIUpdate struct {
 	Text    string
 	Fitness []float64
 }
 
-/*
------------------------------------------------------------------
-
-	VALID METRICS
-
------------------------------------------------------------------
-*/
 var ValidMetrics = []string{
 	"CHI_SQUARED", "EUCLIDEAN", "NORM_EUCLIDEAN",
 	"MANHATTEN", "KL_DIVERGENCE", "COSINE", "JSDIVERGENCE",
 }
 
-/*
------------------------------------------------------------------
-
-	POPULATION CONFIG
-
------------------------------------------------------------------
-*/
 type PopulationConfig struct {
 	Constraints struct {
 		File string `json:"file"`
@@ -131,49 +127,27 @@ var (
 	logger *log.Logger
 )
 
-/*
-rMode returns true when stdout is NOT a terminal.
-
-That is the case when R (or any other pipe) captures the output.
-*/
 func rMode() bool {
 	return !term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-/*
-Initialise the logger once per run.
-  - Always write to the in‑memory buffer.
-  - When we are in CLI mode also duplicate to stderr so the user sees it.
-*/
 func initLogger(isR bool) {
 	writers := []io.Writer{&logBuf}
-	if !isR { // CLI → also echo to stderr
+	if !isR {
 		writers = append(writers, os.Stderr)
 	}
 	logger = log.New(io.MultiWriter(writers...), "", log.LstdFlags)
 }
 
-/* Thin wrappers that replace fmt.Printf/Println throughout the code */
 func infof(format string, a ...any) { logger.Printf(format, a...) }
 func info(a ...any)                 { logger.Print(a...) }
 
-/*
---------------------------------------------------------------
-
-	JSON RESPONSE STRUCT
-
---------------------------------------------------------------
-*/
 type Resp struct {
 	Status  string   `json:"status"`
 	Message string   `json:"message,omitempty"`
 	Log     []string `json:"log,omitempty"`
 }
 
-/*
-Emit the final JSON payload.
-If in R‑mode also attach the accumulated log lines.
-*/
 func emitResponse(status, msg string, isR bool) {
 	var lines []string
 	if isR && logBuf.Len() > 0 {
@@ -184,7 +158,6 @@ func emitResponse(status, msg string, isR bool) {
 		Message: msg,
 		Log:     lines,
 	})
-	// Reset the buffer for the next run (good practice if the binary stays alive)
 	logBuf.Reset()
 }
 
@@ -194,11 +167,6 @@ func emitError(msg string) {
 	emitResponse("error", fullMsg, rMode())
 }
 
-/*
-==============================================================
-====  CORE HELPERS (JSON decode, CSV loaders, etc.)
-==============================================================
-*/
 func decodeJSON(src io.Reader) (Config, error) {
 	var cfg Config
 	dec := json.NewDecoder(src)
@@ -209,7 +177,6 @@ func decodeJSON(src io.Reader) (Config, error) {
 	return cfg, nil
 }
 
-/* Load constraints */
 func loadGroups(groupsFile string) ([]int, []string, error) {
 	groups, header, err := ReadGroupingCSV(groupsFile)
 	if err != nil {
@@ -219,7 +186,6 @@ func loadGroups(groupsFile string) ([]int, []string, error) {
 	return groups, header, nil
 }
 
-/* Load constraints */
 func loadConstraints(constraintsFile string) ([]ConstraintData, []string, error) {
 	constraints, header, err := ReadConstraintCSV(constraintsFile)
 	if err != nil {
@@ -229,7 +195,6 @@ func loadConstraints(constraintsFile string) ([]ConstraintData, []string, error)
 	return constraints, header, nil
 }
 
-/* Load micro‑data */
 func loadMicrodata(microdataFile string) ([]MicroData, []string, error) {
 	microData, header, err := ReadMicroDataCSV(microdataFile)
 	if err != nil {
@@ -238,8 +203,6 @@ func loadMicrodata(microdataFile string) ([]MicroData, []string, error) {
 	infof("Loaded %d microdata records", len(microData))
 	return microData, header, nil
 }
-
-/* Aggregate all input data */
 
 func loadInputData(config Config) ([]ConstraintData, []string, []int, []string, []MicroData, []string, []float64, []string) {
 	constraints, constraintHeader, err := loadConstraints(config.Constraints)
@@ -260,20 +223,15 @@ func loadInputData(config Config) ([]ConstraintData, []string, []int, []string, 
 		os.Exit(1)
 	}
 
-	// Simple uniform weights – replace with real logic if needed
 	weights := make([]float64, len(constraints[0].Values))
 	for i := range weights {
 		weights[i] = 1.0
 	}
 
-	// Create a proper header for weights
-	// Assuming weights correspond to constraint values
 	weightsHeader := make([]string, len(weights))
 	for i := range weightsHeader {
 		weightsHeader[i] = fmt.Sprintf("Weight_%d", i+1)
 	}
-	// OR if you want to use constraint column names:
-	// weightsHeader = constraintHeader  // if they align
 
 	return constraints, constraintHeader,
 		groups, groupsHeader,
@@ -281,23 +239,15 @@ func loadInputData(config Config) ([]ConstraintData, []string, []int, []string, 
 		weights, weightsHeader
 }
 
-/*
---------------------------------------------------------------
-
-	MAIN simulation driver – logs via the unified logger
-
---------------------------------------------------------------
-*/
 func runMicrosim(config Config) {
 	isR := rMode()
-	initLogger(isR) // set up logger *once* for the whole run
+	initLogger(isR)
 
 	constraintData, constraintHeader,
 		groups, groupsHeader,
 		microData, microDataHeader,
 		weights, weightsHeader := loadInputData(config)
 
-	/* ----------- Header validation (log + JSON on error) ----------- */
 	if (!reflect.DeepEqual(constraintHeader, microDataHeader)) &&
 		(!reflect.DeepEqual(constraintHeader, weightsHeader)) &&
 		(!reflect.DeepEqual(constraintHeader, groupsHeader)) {
@@ -314,16 +264,13 @@ func runMicrosim(config Config) {
 	info("Running in command-line mode...")
 	start := time.Now()
 
-	/* ---------------- UI‑updates channel ---------------- */
 	uiUpdates := make(chan UIUpdate, 10)
 	go func() {
 		for upd := range uiUpdates {
-			// Whatever the core algorithm sends gets logged
 			info(upd.Text)
 		}
 	}()
 
-	/* ---------------- Build annealing config ---------------- */
 	annealingConfig := AnnealingConfig{
 		InitialTemp:      config.InitialTemp,
 		MinTemp:          config.MinTemp,
@@ -339,7 +286,6 @@ func runMicrosim(config Config) {
 		RandomSeed:       config.RandomSeed,
 	}
 
-	/* ---------------- Run the core algorithm ---------------- */
 	parallelRun(constraintData, groups, microData, weights, microDataHeader,
 		config.Output, config.Validate, annealingConfig, uiUpdates)
 
@@ -347,9 +293,233 @@ func runMicrosim(config Config) {
 	infof("Completed in %s", elapsed)
 
 	close(uiUpdates)
-
-	/* ---------------- Final JSON response ---------------- */
 	emitResponse("ok", "simulation finished", isR)
+}
+
+/*
+==============================================================
+====  SIMPLIFIED GUI WITH PROPER THREADING
+==============================================================
+*/
+type GUI struct {
+	window      fyne.Window
+	statusLabel *widget.Label
+	logText     *widget.Entry
+	configView  *widget.Entry
+	configData  Config
+	configPath  string
+}
+
+// Safe UI update functions using fyne.Do
+func (g *GUI) updateStatus(text string) {
+	fyne.Do(func() {
+		g.statusLabel.SetText(text)
+	})
+}
+
+func (g *GUI) appendLog(text string) {
+	fyne.Do(func() {
+		current := g.logText.Text
+		if current != "" && !strings.HasSuffix(current, "\n") {
+			current += "\n"
+		}
+		g.logText.SetText(current + text)
+	})
+}
+
+func (g *GUI) setConfigText(text string) {
+	fyne.Do(func() {
+		g.configView.SetText(text)
+	})
+}
+
+func runGUI() {
+	myApp := app.NewWithID("com.compass.gui")
+	myWindow := myApp.NewWindow("COMPASS GUI")
+
+	gui := &GUI{
+		window: myWindow,
+	}
+
+	// Status label
+	gui.statusLabel = widget.NewLabel("Ready - Load a config file")
+
+	// Log text area - use standard entry, not disabled
+	gui.logText = widget.NewMultiLineEntry()
+	gui.logText.SetPlaceHolder("Log output will appear here...")
+	gui.logText.Wrapping = fyne.TextWrapBreak
+	gui.logText.OnChanged = func(s string) {
+		// Prevent user editing
+	}
+	gui.logText.TextStyle = fyne.TextStyle{}
+	logScroll := container.NewScroll(gui.logText)
+	logScroll.SetMinSize(fyne.NewSize(700, 300))
+
+	// Config display - similar approach
+	gui.configView = widget.NewMultiLineEntry()
+	gui.configView.SetPlaceHolder("Load a config file to see its contents here...")
+	gui.configView.Wrapping = fyne.TextWrapBreak
+	gui.configView.TextStyle = fyne.TextStyle{}
+	configScroll := container.NewScroll(gui.configView)
+	configScroll.SetMinSize(fyne.NewSize(700, 200))
+
+	// Load Config button - Blue
+	loadConfigBtn := widget.NewButton("Load Config", func() {
+		fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+			if err != nil || reader == nil {
+				return
+			}
+			defer reader.Close()
+
+			configData, err := io.ReadAll(reader)
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("Failed to read config: %v", err), myWindow)
+				return
+			}
+
+			var config Config
+			if err := json.Unmarshal(configData, &config); err != nil {
+				dialog.ShowError(fmt.Errorf("Failed to parse JSON: %v", err), myWindow)
+				return
+			}
+
+			gui.configData = config
+			gui.configPath = reader.URI().Path()
+
+			prettyJSON, _ := json.MarshalIndent(config, "", "  ")
+			gui.setConfigText(string(prettyJSON))
+
+			gui.updateStatus("Config loaded: " + filepath.Base(gui.configPath))
+			gui.appendLog("Config loaded successfully from: " + gui.configPath)
+			gui.appendLog(fmt.Sprintf("  Constraints: %s", config.Constraints))
+			gui.appendLog(fmt.Sprintf("  Microdata: %s", config.Microdata))
+			gui.appendLog(fmt.Sprintf("  Output: %s", config.Output))
+			gui.appendLog(fmt.Sprintf("  Initial Temp: %.1f", config.InitialTemp))
+			gui.appendLog(fmt.Sprintf("  Max Iterations: %d", config.MaxIterations))
+
+		}, myWindow)
+		fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
+		fileDialog.Show()
+	})
+	// Set button importance to HighImportance for blue color
+	loadConfigBtn.Importance = widget.HighImportance
+
+	// Run button - Green (Success importance)
+	runBtn := widget.NewButton("Run Simulation", func() {
+		if gui.configPath == "" {
+			dialog.ShowInformation("Error", "Please load a config file first", myWindow)
+			return
+		}
+
+		gui.updateStatus("Running simulation...")
+		gui.appendLog("\nStarting simulation...")
+		gui.appendLog("Config: " + filepath.Base(gui.configPath))
+
+		go gui.runSimulation()
+	})
+	// Set button importance to Success for green color
+	runBtn.Importance = widget.SuccessImportance
+
+	// Clear log button - Blue
+	clearBtn := widget.NewButton("Clear Log", func() {
+		fyne.Do(func() {
+			gui.logText.SetText("")
+		})
+	})
+	// Set button importance to HighImportance for blue color
+	clearBtn.Importance = widget.HighImportance
+
+	buttonBar := container.NewHBox(loadConfigBtn, runBtn, clearBtn)
+
+	content := container.NewBorder(
+		container.NewVBox(
+			widget.NewLabelWithStyle("COMPASS GUI", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+			widget.NewSeparator(),
+			container.NewVBox(
+				widget.NewLabel("Config File Contents:"),
+				configScroll,
+			),
+			widget.NewSeparator(),
+			buttonBar,
+			widget.NewSeparator(),
+		),
+		gui.statusLabel,
+		nil,
+		nil,
+		container.NewBorder(
+			widget.NewLabel("Output Log:"),
+			nil,
+			nil,
+			nil,
+			logScroll,
+		),
+	)
+
+	myWindow.SetContent(content)
+	myWindow.Resize(fyne.NewSize(800, 700))
+	myWindow.ShowAndRun()
+}
+
+func (g *GUI) runSimulation() {
+	configData, err := json.MarshalIndent(g.configData, "", "  ")
+	if err != nil {
+		g.updateStatus("Failed to create config")
+		g.appendLog("Error: " + err.Error())
+		return
+	}
+
+	tempFile, err := os.CreateTemp("", "microsim_config_*.json")
+	if err != nil {
+		g.updateStatus("Failed to create temp config")
+		g.appendLog("Error: " + err.Error())
+		return
+	}
+	defer os.Remove(tempFile.Name())
+
+	if _, err := tempFile.Write(configData); err != nil {
+		g.updateStatus("Failed to write config")
+		g.appendLog("Error: " + err.Error())
+		return
+	}
+	tempFile.Close()
+
+	cmd := exec.Command(os.Args[0], "-f", tempFile.Name())
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	g.appendLog("Running simulation...")
+
+	err = cmd.Run()
+	if err != nil {
+		g.updateStatus("Simulation failed")
+		g.appendLog("Error: " + err.Error())
+		if stderr.Len() > 0 {
+			g.appendLog("Stderr: " + stderr.String())
+		}
+		return
+	}
+
+	var resp Resp
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		g.updateStatus("Response parsing failed")
+		g.appendLog("Raw output: " + stdout.String())
+		return
+	}
+
+	if resp.Status == "error" {
+		g.updateStatus("Simulation error")
+		g.appendLog("Error: " + resp.Message)
+	} else {
+		g.updateStatus("Simulation completed successfully")
+		g.appendLog("Success: " + resp.Message)
+	}
+
+	for _, line := range resp.Log {
+		g.appendLog("  " + line)
+	}
+
+	g.appendLog("Simulation finished")
 }
 
 /*
@@ -358,19 +528,15 @@ func runMicrosim(config Config) {
 ==============================================================
 */
 func main() {
-	// ----- flag handling -------------------------------------------------
 	filePath := flag.String("f", "", "path to a JSON config file")
-	guiFlag := flag.Bool("g", false, "open the GUI (placeholder)")
+	guiFlag := flag.Bool("g", false, "open the GUI")
 	flag.Parse()
 
-	// ----- GUI flag -------------------------------------------------------
 	if *guiFlag {
-		fmt.Fprintln(os.Stderr, " opening GUI … (placeholder)")
-		emitResponse("gui", "GUI would be launched here", rMode())
+		runGUI()
 		return
 	}
 
-	// ----- Determine input source (file vs stdin) ------------------------
 	var src io.Reader
 	if *filePath != "" {
 		f, err := os.Open(*filePath)
@@ -382,23 +548,19 @@ func main() {
 		src = f
 		fmt.Fprintln(os.Stderr, "loading config from:", *filePath)
 	} else {
-		// No -f flag – make sure stdin isn’t a terminal
 		if term.IsTerminal(int(os.Stdin.Fd())) {
-			fmt.Fprintln(os.Stderr, "  No input on stdin – use -f <file>.json or pipe JSON")
+			fmt.Fprintln(os.Stderr, "No input on stdin – use -f <file>.json or pipe JSON")
 			emitResponse("default", "no input provided", rMode())
 			return
 		}
 		src = os.Stdin
 	}
 
-	// ----- Decode the JSON -----------------------------------------------
 	cfg, err := decodeJSON(src)
 	if err != nil {
 		emitError("invalid JSON: " + err.Error())
 		os.Exit(1)
 	}
 
-	// ----- Run the simulation -------------------------------------------
 	runMicrosim(cfg)
-
 }

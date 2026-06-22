@@ -1,0 +1,854 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
+	"golang.org/x/term"
+)
+
+/*
+==============================================================
+====  CONFIG & RESULT STRUCTS
+==============================================================
+*/
+type Config struct {
+	Constraints      string  `json:"constraints"`
+	Groups           string  `json:"groups"`
+	Microdata        string  `json:"microdata"`
+	Output           string  `json:"output"`
+	Validate         string  `json:"validate"`
+	InitialTemp      float64 `json:"initialTemp"`
+	MinTemp          float64 `json:"minTemp"`
+	CoolingRate      float64 `json:"coolingRate"`
+	ReheatFactor     float64 `json:"reheatFactor"`
+	FitnessThreshold float64 `json:"fitnessThreshold"`
+	MinImprovement   float64 `json:"minImprovement"`
+	MaxIterations    int     `json:"maxIterations"`
+	WindowSize       int     `json:"windowSize"`
+	Change           int     `json:"change"`
+	Distance         string  `json:"distance"`
+	UseRandomSeed    string  `json:"useRandomSeed"` // "yes"/"no"
+	RandomSeed       int     `json:"randomSeed"`    // integer seed
+}
+
+type AnnealingConfig struct {
+	InitialTemp      float64 `json:"initialTemp"`
+	MinTemp          float64 `json:"minTemp"`
+	CoolingRate      float64 `json:"coolingRate"`
+	ReheatFactor     float64 `json:"reheatFactor"`
+	FitnessThreshold float64 `json:"fitnessThreshold"`
+	MinImprovement   float64 `json:"minImprovement"`
+	MaxIterations    int     `json:"maxIterations"`
+	WindowSize       int     `json:"windowSize"`
+	Change           int     `json:"change"`
+	Distance         string  `json:"distance"`
+	UseRandomSeed    string  `json:"useRandomSeed"`
+	RandomSeed       int     `json:"randomSeed,omitempty"` // optional
+}
+
+type WeightsData struct {
+	ID     string
+	Values []float64
+}
+type MicroData struct {
+	ID     string
+	Values []float64
+}
+type ConstraintData struct {
+	ID     string
+	Values []float64
+	Total  float64
+}
+type results struct {
+	area              string
+	population        float64
+	synthpop_totals   []float64
+	ids               []string
+	constraint_totals []float64
+	fitness           float64
+}
+
+/* UIUpdate – messages that the core algorithm can push back */
+type UIUpdate struct {
+	Text    string
+	Fitness []float64
+}
+
+/*
+-----------------------------------------------------------------
+
+	VALID METRICS
+
+-----------------------------------------------------------------
+*/
+var ValidMetrics = []string{
+	"CHI_SQUARED", "EUCLIDEAN", "NORM_EUCLIDEAN",
+	"MANHATTEN", "KL_DIVERGENCE", "COSINE", "JSDIVERGENCE",
+}
+
+/*
+-----------------------------------------------------------------
+
+	POPULATION CONFIG
+
+-----------------------------------------------------------------
+*/
+type PopulationConfig struct {
+	Constraints struct {
+		File string `json:"file"`
+	} `json:"constraints"`
+	Microdata struct {
+		File string `json:"file"`
+	} `json:"microdata"`
+	Weights struct {
+		UseWeights string
+		File       string `json:"file"`
+	} `json:"weights"`
+	Output struct {
+		File string `json:"file"`
+	} `json:"output"`
+	Validate struct {
+		File string `json:"file"`
+	} `json:"validate"`
+}
+
+/*
+==============================================================
+====  LOGGING INFRASTRUCTURE
+==============================================================
+*/
+var (
+	logBuf bytes.Buffer
+	logger *log.Logger
+)
+
+/*
+rMode returns true when stdout is NOT a terminal.
+That is the case when R (or any other pipe) captures the output.
+*/
+func rMode() bool {
+	return !term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+/*
+Initialise the logger once per run.
+- Always write to the in‑memory buffer.
+- When we are in CLI mode also duplicate to stderr so the user sees it.
+*/
+func initLogger(isR bool) {
+	writers := []io.Writer{&logBuf}
+	if !isR { // CLI → also echo to stderr
+		writers = append(writers, os.Stderr)
+	}
+	logger = log.New(io.MultiWriter(writers...), "", log.LstdFlags)
+}
+
+/* Thin wrappers that replace fmt.Printf/Println throughout the code */
+func infof(format string, a ...any) { logger.Printf(format, a...) }
+func info(a ...any)                 { logger.Print(a...) }
+
+/*
+--------------------------------------------------------------
+
+	JSON RESPONSE STRUCT
+
+--------------------------------------------------------------
+*/
+type Resp struct {
+	Status  string   `json:"status"`
+	Message string   `json:"message,omitempty"`
+	Log     []string `json:"log,omitempty"`
+}
+
+/*
+Emit the final JSON payload.
+If in R‑mode also attach the accumulated log lines.
+*/
+func emitResponse(status, msg string, isR bool) {
+	var lines []string
+	if isR && logBuf.Len() > 0 {
+		lines = strings.Split(strings.TrimSpace(logBuf.String()), "\n")
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(Resp{
+		Status:  status,
+		Message: msg,
+		Log:     lines,
+	})
+	// Reset the buffer for the next run (good practice if the binary stays alive)
+	logBuf.Reset()
+}
+
+func emitError(msg string) {
+	expectedJSON := `{  constraints:string,microdata:string,output:string,validate:string,initialTemp:float64,minTemp:float64,coolingRate:float64,reheatFactor:float64,fitnessThreshold:float64,minImprovement:float64,maxIterations:int, windowSize:int,change:int,distance:string,useRandomSeed:yes | no,randomSeed:int}`
+	fullMsg := fmt.Sprintf("%s Expected JSON format:%s", msg, expectedJSON)
+	emitResponse("error", fullMsg, rMode())
+}
+
+/*
+==============================================================
+====  CORE HELPERS (JSON decode, CSV loaders, etc.)
+==============================================================
+*/
+func decodeJSON(src io.Reader) (Config, error) {
+	var cfg Config
+	dec := json.NewDecoder(src)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}
+
+/* Load constraints */
+func loadGroups(groupsFile string) ([]int, []string, error) {
+	groups, header, err := ReadGroupingCSV(groupsFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read constraints CSV: %w", err)
+	}
+	infof("Loaded %d constraint areas", len(groups))
+	return groups, header, nil
+}
+
+/* Load constraints */
+func loadConstraints(constraintsFile string) ([]ConstraintData, []string, error) {
+	constraints, header, err := ReadConstraintCSV(constraintsFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read constraints CSV: %w", err)
+	}
+	infof("Loaded %d constraint areas", len(constraints))
+	return constraints, header, nil
+}
+
+/* Load micro‑data */
+func loadMicrodata(microdataFile string) ([]MicroData, []string, error) {
+	microData, header, err := ReadMicroDataCSV(microdataFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read microdata CSV: %w", err)
+	}
+	infof("Loaded %d microdata records", len(microData))
+	return microData, header, nil
+}
+
+/* Aggregate all input data */
+func loadInputData(config Config) ([]ConstraintData, []string, []int, []string, []MicroData, []string, []float64, []string) {
+	constraints, constraintHeader, err := loadConstraints(config.Constraints)
+	if err != nil {
+		infof("Constraint loading error: %v", err)
+		os.Exit(1)
+	}
+
+	groups, groupsHeader, err := loadGroups(config.Groups)
+	if err != nil {
+		infof("Groups loading error: %v", err)
+		os.Exit(1)
+	}
+
+	microData, microDataHeader, err := loadMicrodata(config.Microdata)
+	if err != nil {
+		infof("Microdata loading error: %v", err)
+		os.Exit(1)
+	}
+
+	// Simple uniform weights – replace with real logic if needed
+	weights := make([]float64, len(constraints[0].Values))
+	for i := range weights {
+		weights[i] = 1.0
+	}
+
+	// Create a proper header for weights
+	// Assuming weights correspond to constraint values
+	weightsHeader := make([]string, len(weights))
+	for i := range weightsHeader {
+		weightsHeader[i] = fmt.Sprintf("Weight_%d", i+1)
+	}
+	// OR if you want to use constraint column names:
+	// weightsHeader = constraintHeader  // if they align
+
+	return constraints, constraintHeader,
+		groups, groupsHeader,
+		microData, microDataHeader,
+		weights, weightsHeader
+}
+
+/*
+--------------------------------------------------------------
+
+	MAIN simulation driver – logs via the unified logger
+
+--------------------------------------------------------------
+*/
+func runMicrosim(config Config) {
+	isR := rMode()
+	initLogger(isR) // set up logger *once* for the whole run
+
+	constraintData, constraintHeader,
+		groups, groupsHeader,
+		microData, microDataHeader,
+		weights, weightsHeader := loadInputData(config)
+
+	/* ----------- Header validation (log + JSON on error) ----------- */
+	if (!reflect.DeepEqual(constraintHeader, microDataHeader)) &&
+		(!reflect.DeepEqual(constraintHeader, weightsHeader)) &&
+		(!reflect.DeepEqual(constraintHeader, groupsHeader)) {
+
+		info("Error: The Constraints header and the MicroData or the Groups headers are not the same")
+		for i := 0; i < len(constraintHeader); i++ {
+			infof("%s %s %t", constraintHeader[i], microDataHeader[i],
+				microDataHeader[i] == constraintHeader[i])
+		}
+		emitResponse("error", "header mismatch", isR)
+		os.Exit(1)
+	}
+
+	info("Running in command-line mode...")
+	start := time.Now()
+
+	/* ---------------- UI‑updates channel ---------------- */
+	uiUpdates := make(chan UIUpdate, 10)
+	go func() {
+		for upd := range uiUpdates {
+			// Whatever the core algorithm sends gets logged
+			info(upd.Text)
+		}
+	}()
+
+	/* ---------------- Build annealing config ---------------- */
+	annealingConfig := AnnealingConfig{
+		InitialTemp:      config.InitialTemp,
+		MinTemp:          config.MinTemp,
+		CoolingRate:      config.CoolingRate,
+		ReheatFactor:     config.ReheatFactor,
+		FitnessThreshold: config.FitnessThreshold,
+		MinImprovement:   config.MinImprovement,
+		MaxIterations:    config.MaxIterations,
+		WindowSize:       config.WindowSize,
+		Change:           config.Change,
+		Distance:         config.Distance,
+		UseRandomSeed:    config.UseRandomSeed,
+		RandomSeed:       config.RandomSeed,
+	}
+
+	/* ---------------- Run the core algorithm ---------------- */
+	parallelRun(constraintData, groups, microData, weights, microDataHeader,
+		config.Output, config.Validate, annealingConfig, uiUpdates)
+
+	elapsed := time.Since(start)
+	infof("Completed in %s", elapsed)
+
+	close(uiUpdates)
+
+	/* ---------------- Final JSON response ---------------- */
+	emitResponse("ok", "simulation finished", isR)
+}
+
+// GUIGlobals holds the application state
+type GUIGlobals struct {
+	window        fyne.Window
+	statusText    *widget.Label
+	logText       *widget.RichText
+	configPath    string
+	outputPath    string
+	validatePath  string
+	constraints   string
+	groups        string
+	microdata     string
+	initialTemp   string
+	minTemp       string
+	coolingRate   string
+	reheatFactor  string
+	fitnessThresh string
+	minImprove    string
+	maxIterations string
+	windowSize    string
+	change        string
+	distance      string
+	useRandomSeed string
+	randomSeed    string
+}
+
+func runGUI() {
+	myApp := app.NewWithID("com.microsim.gui")
+	myWindow := myApp.NewWindow("Microsimulation GUI")
+
+	globals := &GUIGlobals{
+		window: myWindow,
+	}
+
+	// Create menu - using pointers to MenuItem
+	menuItems := []*fyne.MenuItem{
+		{
+			Label: "Load Config",
+			Action: func() {
+				fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+					if err != nil || reader == nil {
+						return
+					}
+					defer reader.Close()
+					globals.configPath = reader.URI().Path()
+					globals.statusText.SetText("Loaded config: " + filepath.Base(globals.configPath))
+					globals.loadConfigFromFile(reader)
+				}, myWindow)
+				fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
+				fileDialog.Show()
+			},
+		},
+		{
+			Label: "Load Constraints",
+			Action: func() {
+				fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+					if err != nil || reader == nil {
+						return
+					}
+					defer reader.Close()
+					globals.constraints = reader.URI().Path()
+					globals.statusText.SetText("Loaded constraints: " + filepath.Base(globals.constraints))
+				}, myWindow)
+				fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
+				fileDialog.Show()
+			},
+		},
+		{
+			Label: "Load Groups",
+			Action: func() {
+				fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+					if err != nil || reader == nil {
+						return
+					}
+					defer reader.Close()
+					globals.groups = reader.URI().Path()
+					globals.statusText.SetText("Loaded groups: " + filepath.Base(globals.groups))
+				}, myWindow)
+				fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
+				fileDialog.Show()
+			},
+		},
+		{
+			Label: "Load Microdata",
+			Action: func() {
+				fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+					if err != nil || reader == nil {
+						return
+					}
+					defer reader.Close()
+					globals.microdata = reader.URI().Path()
+					globals.statusText.SetText("Loaded microdata: " + filepath.Base(globals.microdata))
+				}, myWindow)
+				fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
+				fileDialog.Show()
+			},
+		},
+		{
+			Label: "Select Output",
+			Action: func() {
+				fileDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+					if err != nil || writer == nil {
+						return
+					}
+					defer writer.Close()
+					globals.outputPath = writer.URI().Path()
+					globals.statusText.SetText("Output set to: " + filepath.Base(globals.outputPath))
+				}, myWindow)
+				fileDialog.SetFileName("output.csv")
+				fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
+				fileDialog.Show()
+			},
+		},
+		{
+			Label: "Select Validate",
+			Action: func() {
+				fileDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+					if err != nil || writer == nil {
+						return
+					}
+					defer writer.Close()
+					globals.validatePath = writer.URI().Path()
+					globals.statusText.SetText("Validate set to: " + filepath.Base(globals.validatePath))
+				}, myWindow)
+				fileDialog.SetFileName("validate.csv")
+				fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
+				fileDialog.Show()
+			},
+		},
+		{
+			Label: "Save Config",
+			Action: func() {
+				fileDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+					if err != nil || writer == nil {
+						return
+					}
+					defer writer.Close()
+					config := globals.buildConfig()
+					data, _ := json.MarshalIndent(config, "", "  ")
+					writer.Write(data)
+					globals.statusText.SetText("Config saved to: " + filepath.Base(writer.URI().Path()))
+				}, myWindow)
+				fileDialog.SetFileName("config.json")
+				fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
+				fileDialog.Show()
+			},
+		},
+		{
+			Label: "Exit",
+			Action: func() {
+				myWindow.Close()
+			},
+		},
+	}
+
+	// Create main menu
+	mainMenu := fyne.NewMenu("File", menuItems...)
+	myWindow.SetMainMenu(fyne.NewMainMenu(mainMenu))
+
+	// Create status bar
+	globals.statusText = widget.NewLabel("Ready")
+	statusBar := container.NewHBox(
+		widget.NewIcon(theme.InfoIcon()),
+		globals.statusText,
+	)
+
+	// Create log area - use NewRichText instead of NewRichTextFromString
+	globals.logText = widget.NewRichText()
+	globals.logText.ParseMarkdown("Log output will appear here...")
+	scrollLog := container.NewScroll(globals.logText)
+	scrollLog.SetMinSize(fyne.NewSize(600, 200))
+
+	// Create parameter entries
+	constraintEntry := widget.NewEntry()
+	constraintEntry.SetPlaceHolder("Constraints file path")
+	groupEntry := widget.NewEntry()
+	groupEntry.SetPlaceHolder("Groups file path")
+	microEntry := widget.NewEntry()
+	microEntry.SetPlaceHolder("Microdata file path")
+	outputEntry := widget.NewEntry()
+	outputEntry.SetPlaceHolder("Output file path")
+	validateEntry := widget.NewEntry()
+	validateEntry.SetPlaceHolder("Validate file path")
+
+	// Parameter fields with defaults
+	initialTempEntry := widget.NewEntry()
+	initialTempEntry.SetText("1000")
+	minTempEntry := widget.NewEntry()
+	minTempEntry.SetText("0.1")
+	coolingRateEntry := widget.NewEntry()
+	coolingRateEntry.SetText("0.95")
+	reheatFactorEntry := widget.NewEntry()
+	reheatFactorEntry.SetText("0.5")
+	fitnessThreshEntry := widget.NewEntry()
+	fitnessThreshEntry.SetText("0.001")
+	minImproveEntry := widget.NewEntry()
+	minImproveEntry.SetText("0.0001")
+	maxIterEntry := widget.NewEntry()
+	maxIterEntry.SetText("10000")
+	windowSizeEntry := widget.NewEntry()
+	windowSizeEntry.SetText("100")
+	changeEntry := widget.NewEntry()
+	changeEntry.SetText("10")
+	distanceSelect := widget.NewSelect([]string{
+		"CHI_SQUARED", "EUCLIDEAN", "NORM_EUCLIDEAN",
+		"MANHATTEN", "KL_DIVERGENCE", "COSINE", "JSDIVERGENCE",
+	}, func(s string) {})
+	distanceSelect.SetSelected("CHI_SQUARED")
+	useRandomSeedSelect := widget.NewSelect([]string{"yes", "no"}, func(s string) {})
+	useRandomSeedSelect.SetSelected("no")
+	randomSeedEntry := widget.NewEntry()
+	randomSeedEntry.SetText("42")
+
+	// Create parameter grid
+	paramGrid := container.NewGridWithColumns(2,
+		widget.NewLabel("Constraints:"), constraintEntry,
+		widget.NewLabel("Groups:"), groupEntry,
+		widget.NewLabel("Microdata:"), microEntry,
+		widget.NewLabel("Output:"), outputEntry,
+		widget.NewLabel("Validate:"), validateEntry,
+		widget.NewLabel("Initial Temp:"), initialTempEntry,
+		widget.NewLabel("Min Temp:"), minTempEntry,
+		widget.NewLabel("Cooling Rate:"), coolingRateEntry,
+		widget.NewLabel("Reheat Factor:"), reheatFactorEntry,
+		widget.NewLabel("Fitness Threshold:"), fitnessThreshEntry,
+		widget.NewLabel("Min Improvement:"), minImproveEntry,
+		widget.NewLabel("Max Iterations:"), maxIterEntry,
+		widget.NewLabel("Window Size:"), windowSizeEntry,
+		widget.NewLabel("Change:"), changeEntry,
+		widget.NewLabel("Distance Metric:"), distanceSelect,
+		widget.NewLabel("Use Random Seed:"), useRandomSeedSelect,
+		widget.NewLabel("Random Seed:"), randomSeedEntry,
+	)
+
+	// Create run button
+	runButton := widget.NewButtonWithIcon("Run Simulation", theme.MediaPlayIcon(), func() {
+		// Validate required fields
+		if constraintEntry.Text == "" || microEntry.Text == "" {
+			dialog.ShowInformation("Error", "Constraints and Microdata are required", myWindow)
+			return
+		}
+
+		// Build config
+		config := globals.buildConfigFromEntries(
+			constraintEntry.Text,
+			groupEntry.Text,
+			microEntry.Text,
+			outputEntry.Text,
+			validateEntry.Text,
+			initialTempEntry.Text,
+			minTempEntry.Text,
+			coolingRateEntry.Text,
+			reheatFactorEntry.Text,
+			fitnessThreshEntry.Text,
+			minImproveEntry.Text,
+			maxIterEntry.Text,
+			windowSizeEntry.Text,
+			changeEntry.Text,
+			distanceSelect.Selected,
+			useRandomSeedSelect.Selected,
+			randomSeedEntry.Text,
+		)
+
+		globals.runSimulation(config)
+	})
+
+	// Clear log button
+	clearButton := widget.NewButtonWithIcon("Clear Log", theme.DeleteIcon(), func() {
+		globals.logText.ParseMarkdown("")
+	})
+
+	buttonBar := container.NewHBox(runButton, clearButton)
+
+	// Layout
+	content := container.NewBorder(
+		container.NewVBox(
+			widget.NewLabelWithStyle("Microsimulation Parameters", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+			container.NewScroll(paramGrid),
+			widget.NewSeparator(),
+			buttonBar,
+			widget.NewSeparator(),
+		),
+		statusBar,
+		nil,
+		nil,
+		scrollLog,
+	)
+
+	myWindow.SetContent(content)
+	myWindow.Resize(fyne.NewSize(800, 800))
+	myWindow.ShowAndRun()
+}
+
+func (g *GUIGlobals) loadConfigFromFile(reader io.Reader) {
+	// Parse JSON config and populate fields
+	var config Config
+	decoder := json.NewDecoder(reader)
+	if err := decoder.Decode(&config); err != nil {
+		dialog.ShowError(fmt.Errorf("Failed to parse config: %v", err), g.window)
+		return
+	}
+
+	// This would populate the UI fields - you'd need to store references to the entries
+	g.statusText.SetText("Config loaded successfully")
+	g.appendLog("Config loaded: " + g.configPath)
+}
+
+func (g *GUIGlobals) buildConfig() Config {
+	return Config{
+		Constraints:      g.constraints,
+		Groups:           g.groups,
+		Microdata:        g.microdata,
+		Output:           g.outputPath,
+		Validate:         g.validatePath,
+		InitialTemp:      1000,
+		MinTemp:          0.1,
+		CoolingRate:      0.95,
+		ReheatFactor:     0.5,
+		FitnessThreshold: 0.001,
+		MinImprovement:   0.0001,
+		MaxIterations:    10000,
+		WindowSize:       100,
+		Change:           10,
+		Distance:         "CHI_SQUARED",
+		UseRandomSeed:    "no",
+		RandomSeed:       42,
+	}
+}
+
+func (g *GUIGlobals) buildConfigFromEntries(
+	constraints, groups, microdata, output, validate,
+	initialTemp, minTemp, coolingRate, reheatFactor,
+	fitnessThresh, minImprove, maxIterations, windowSize,
+	change, distance, useRandomSeed, randomSeed string) Config {
+
+	// Parse float64 values with defaults
+	parseFloat := func(s string, def float64) float64 {
+		var f float64
+		if _, err := fmt.Sscanf(s, "%f", &f); err != nil {
+			return def
+		}
+		return f
+	}
+
+	parseInt := func(s string, def int) int {
+		var i int
+		if _, err := fmt.Sscanf(s, "%d", &i); err != nil {
+			return def
+		}
+		return i
+	}
+
+	return Config{
+		Constraints:      constraints,
+		Groups:           groups,
+		Microdata:        microdata,
+		Output:           output,
+		Validate:         validate,
+		InitialTemp:      parseFloat(initialTemp, 1000),
+		MinTemp:          parseFloat(minTemp, 0.1),
+		CoolingRate:      parseFloat(coolingRate, 0.95),
+		ReheatFactor:     parseFloat(reheatFactor, 0.5),
+		FitnessThreshold: parseFloat(fitnessThresh, 0.001),
+		MinImprovement:   parseFloat(minImprove, 0.0001),
+		MaxIterations:    parseInt(maxIterations, 10000),
+		WindowSize:       parseInt(windowSize, 100),
+		Change:           parseInt(change, 10),
+		Distance:         distance,
+		UseRandomSeed:    useRandomSeed,
+		RandomSeed:       parseInt(randomSeed, 42),
+	}
+}
+
+func (g *GUIGlobals) appendLog(text string) {
+	current := g.logText.String()
+	if current != "" && !strings.HasSuffix(current, "\n") {
+		current += "\n"
+	}
+	g.logText.ParseMarkdown(current + text)
+}
+
+func (g *GUIGlobals) runSimulation(config Config) {
+	g.statusText.SetText("Running simulation...")
+	g.appendLog("Starting simulation...")
+
+	// Create config file
+	configData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("Failed to create config: %v", err), g.window)
+		return
+	}
+
+	// Write config to temp file
+	tempFile, err := os.CreateTemp("", "microsim_config_*.json")
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("Failed to create temp config: %v", err), g.window)
+		return
+	}
+	defer os.Remove(tempFile.Name())
+
+	if _, err := tempFile.Write(configData); err != nil {
+		dialog.ShowError(fmt.Errorf("Failed to write config: %v", err), g.window)
+		return
+	}
+	tempFile.Close()
+
+	// Run the simulation as a subprocess
+	cmd := exec.Command(os.Args[0], "-f", tempFile.Name())
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	go func() {
+		err := cmd.Run()
+		if err != nil {
+			g.statusText.SetText("Simulation failed")
+			g.appendLog("Error: " + err.Error())
+			if stderr.Len() > 0 {
+				g.appendLog("Stderr: " + stderr.String())
+			}
+			return
+		}
+
+		// Parse JSON response
+		var resp Resp
+		if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+			g.statusText.SetText("Simulation completed but response parsing failed")
+			g.appendLog("Raw output: " + stdout.String())
+			return
+		}
+
+		if resp.Status == "error" {
+			g.statusText.SetText("Simulation error")
+			g.appendLog("Error: " + resp.Message)
+		} else {
+			g.statusText.SetText("Simulation completed successfully")
+			g.appendLog("Success: " + resp.Message)
+		}
+
+		// Add log lines
+		for _, line := range resp.Log {
+			g.appendLog(line)
+		}
+	}()
+}
+
+/*
+==============================================================
+====  ENTRY POINT (main)
+==============================================================
+*/
+func main() {
+	// ----- flag handling -------------------------------------------------
+	filePath := flag.String("f", "", "path to a JSON config file")
+	guiFlag := flag.Bool("g", false, "open the GUI (placeholder)")
+	flag.Parse()
+
+	// ----- GUI flag -------------------------------------------------------
+	if *guiFlag {
+		runGUI()
+		return
+	}
+
+	// ----- Determine input source (file vs stdin) ------------------------
+	var src io.Reader
+	if *filePath != "" {
+		f, err := os.Open(*filePath)
+		if err != nil {
+			emitResponse("error", "cannot open file: "+err.Error(), rMode())
+			os.Exit(1)
+		}
+		defer f.Close()
+		src = f
+		fmt.Fprintln(os.Stderr, "loading config from:", *filePath)
+	} else {
+		// No -f flag – make sure stdin isn't a terminal
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			fmt.Fprintln(os.Stderr, "  No input on stdin – use -f <file>.json or pipe JSON")
+			emitResponse("default", "no input provided", rMode())
+			return
+		}
+		src = os.Stdin
+	}
+
+	// ----- Decode the JSON -----------------------------------------------
+	cfg, err := decodeJSON(src)
+	if err != nil {
+		emitError("invalid JSON: " + err.Error())
+		os.Exit(1)
+	}
+
+	// ----- Run the simulation -------------------------------------------
+	runMicrosim(cfg)
+}
