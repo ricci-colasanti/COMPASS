@@ -114,13 +114,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-def run_compass(config_dict, binary_path="./compass"):
+def run_compass(config_dict, binary_path="./compass_linux_amd64"):
     """
     Run COMPASS from Python with a configuration dictionary.
     
     Args:
         config_dict: Dictionary containing COMPASS configuration parameters
-        binary_path: Path to compiled COMPASS binary (default: "./compass")
+        binary_path: Path to compiled COMPASS binary (default: "./compass_linux_amd64")
     
     Returns:
         Dictionary with results including status, message, and log
@@ -201,11 +201,11 @@ if __name__ == "__main__":
 # R script: run_compass.R
 library(jsonlite)
 
-run_compass <- function(config_list, binary_path = "./compass") {
+run_compass <- function(config_list, binary_path = "./compass_linux_amd64") {
   #' Run COMPASS from R with a configuration list
   #'
   #' @param config_list List containing COMPASS configuration parameters
-  #' @param binary_path Path to compiled COMPASS binary (default: "./compass")
+  #' @param binary_path Path to compiled COMPASS binary (default: "./compass_linux_amd64")
   #' @return List with results including status, message, and execution details
   
   # Convert to compact JSON
