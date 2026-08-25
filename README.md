@@ -6,7 +6,7 @@
 
 **Work in Progress - Not Ready for Production Use**
 
-*This is a research/experimental project for generating spatial synthetic populations. The code is under active development and not yet intended for public release or real-world use.*
+*This is a research/experimental project for generating spatial synthetic populations. The code is under active development and not yet intended for public release or real-world use. But is getting there!*
 
 ---
 
