@@ -60,13 +60,13 @@ Pre-compiled executables are available for:
 
 ```bash
 # Download the Linux binary
-chmod +x compass
+chmod +x compass_linux_amd64
 
 # Test it works
-./compass -f config.json
+./compass_linux_amd64 -f config.json
 
 # Or pipe JSON directly
-echo '{"constraints":"data.csv","microdata":"micro.csv"}' | ./compass
+echo '{"constraints":"data.csv","microdata":"micro.csv"}' | ./compass_linux_amd64
 ```
 
 ### Building from Source
