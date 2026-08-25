@@ -46,9 +46,9 @@ Pre-compiled executables are available for:
 
 | Platform | Status | Location |
 |----------|--------|----------|
-| Linux (64-bit) | ✅ Available | Included in repository |
-| Windows | 🚧 Coming soon | Build from source |
-| macOS | 🚧 Coming soon | Build from source |
+| Linux (64-bit) | ✅ Available | Included in repository  compass_linux_amd64 |
+| Windows | ✅ Available | Included in repository  compass_windows_amd64.exe |
+| macOS |  ✅ Available | Included in repository compass_darwin_arm64 |
 
 ### Prerequisites (Building from Source)
 
@@ -98,13 +98,11 @@ The tool accepts JSON configuration either from a file or via stdin:
 
 ```bash
 # Method 1: JSON file input
-./compass -f config.json
+./compass_linux_amd64 -f config.json
 
 # Method 2: Pipe JSON to stdin
-echo '{"constraints":"data.csv","microdata":"micro.csv"}' | ./compass
+echo '{"constraints":"data.csv","microdata":"micro.csv"}' | ./compass_linux_amd64
 
-# Method 3: Run with GUI (placeholder)
-./compass -g
 ```
 
 ### Python Interface
