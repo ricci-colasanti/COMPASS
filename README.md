@@ -597,7 +597,7 @@ This project was developed with contributions from:
 
 - **Core Algorithm Development**: Alison Heppenstall, Ricardo Colasanti, Hugh Rice, Andreas Hoehn 
 - **Initial Project Design**: Nik Lomax Alison Heppenstall
-- **Documentation and Code Comments**: Comprehensive documentation, code commenting, and technical writing assistance provided by **AI Assistant** through DeepSeek AI.
+- **Documentation and Code Comments**: Comprehensive documentation, code commenting, and technical writing assistance provided by **AI Assistant** through DeepSeek AI baised on the inital redme and code comments by Ricardo Colasanti
 
 
 The simulated annealing implementation, distance metrics, parallel processing architecture, and cross-platform build scripts were documented and commented with the assistance of AI to ensure clarity, maintainability, and usability for researchers and developers.
