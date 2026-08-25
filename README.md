@@ -1,3 +1,4 @@
+
 <div align="center">
   <img src="img/COMPASS.png" alt="COMPASS Logo" width="400"/>
 </div>
@@ -46,9 +47,10 @@ Pre-compiled executables are available for:
 
 | Platform | Status | Location |
 |----------|--------|----------|
-| Linux (64-bit) | ✅ Available | Included in repository  compass_linux_amd64 |
-| Windows | ✅ Available | Included in repository  compass_windows_amd64.exe |
-| macOS |  ✅ Available | Included in repository compass_darwin_arm64 |
+| Linux (64-bit) | ✅ Available | Included in repository: `compass_linux_amd64` |
+| Windows | ✅ Available | Included in repository: `compass_windows_amd64.exe` |
+| macOS (Apple Silicon) | ✅ Available | Included in repository: `compass_darwin_arm64` |
+| macOS (Intel) | ✅ Available | Included in repository: `compass_darwin_amd64` |
 
 ### Prerequisites (Building from Source)
 
@@ -102,7 +104,6 @@ The tool accepts JSON configuration either from a file or via stdin:
 
 # Method 2: Pipe JSON to stdin
 echo '{"constraints":"data.csv","microdata":"micro.csv"}' | ./compass_linux_amd64
-
 ```
 
 ### Python Interface
@@ -166,9 +167,9 @@ def run_compass(config_dict, binary_path="./compass_linux_amd64"):
 # Example usage
 if __name__ == "__main__":
     config = {
-        "constraints" : "data/BlockLand/artifical_cencus.csv",
-        "microdata"   : "data/BlockLand/artifical_hh_survay.csv",
-        "groups"      : "data/BlockLand/artificial_groups.csv",
+        "constraints" : "data/BlockWorld/artifical_cencus.csv",
+        "microdata"   : "data/BlockWorld/artifical_survey.csv",
+        "groups"      : "data/BlockWorld/artificial_groups.csv",
         "output"      : "results/artificial_synthetic_population.csv",
         "validate"    : "results/artificial_synthPopSurvey.csv",
         "initialTemp": 1000.0,
@@ -247,9 +248,9 @@ run_compass <- function(config_list, binary_path = "./compass_linux_amd64") {
 
 # Example usage
 config <- list(
-  constraints = "data/BlockLand/artifical_cencus.csv",
-  microdata   = "data/BlockLand/artifical_hh_survay.csv",
-  groups      = "data/BlockLand/artificial_groups.csv",
+  constraints = "data/BlockWorld/artifical_cencus.csv",
+  microdata   = "data/BlockWorld/artifical_survey.csv",
+  groups      = "data/BlockWorld/artificial_groups.csv",
   output      = "results/artificial_synthetic_population.csv",
   validate    = "results/artificial_synthPopSurvey.csv",
   initialTemp = 1000.0,
@@ -309,29 +310,305 @@ if (!is.null(result$log)) {
 | `useRandomSeed` | `"no"` | Use fixed random seed (`"yes"`/`"no"`) |
 | `randomSeed` | `42` | Random seed if `useRandomSeed="yes"` |
 
-### Input File Formats
+---
 
-#### Constraints CSV
+## Data Preparation
+
+### Overview
+
+COMPASS requires three input files to generate a synthetic population:
+
+1. **Constraints File** (`constraints`): Census totals for each geographic area
+2. **Microdata File** (`microdata`): Individual survey records
+3. **Groups File** (`groups`): Mapping that groups related variables for validation
+
+**Critical Requirement**: All files must have their attribute columns in **exactly the same order**. COMPASS uses column position, not column names, to align data.
+
+### 1. Constraints File (Census Data)
+
+The constraints file contains the target totals for each geographic area.
+
+#### Format
 ```
-id,total,var1,var2,var3,...
+area_id,total,attr1,attr2,attr3,...
 A001,100,25,40,35,...
 A002,150,60,50,40,...
 ```
 
-#### Microdata CSV
+#### Column Requirements
+- **First column**: Area identifier (string)
+- **Second column**: Total population (numeric)
+- **Remaining columns**: Attribute totals (numeric)
+
+#### Example from `artifical_cencus.csv`
 ```
-id,var1,var2,var3,...
+area_id,population,location_urban,location_rural,hh_size1,hh_size2,...
+d1,267,0,267,59,176,...
+d2,290,0,290,68,182,...
+```
+
+**Important**: The `population` column (second column) is the total population for that area. The remaining columns are the constraints that the synthetic population must match.
+
+### 2. Microdata File (Survey Data)
+
+The microdata file contains individual survey records that will be sampled to create the synthetic population.
+
+#### Format
+```
+hh_id,attr1,attr2,attr3,...
 P001,1,0,1,...
 P002,0,1,1,...
 ```
 
-#### Groups CSV
+#### Column Requirements
+- **First column**: Record identifier (string)
+- **Remaining columns**: Attribute values (numeric, typically 0/1 indicators)
+
+#### Example from `artifical_survey.csv`
 ```
-variable,group
-var1,1
-var2,2
-var3,1
+hh_id,location_urban,location_rural,hh_size1,hh_size2,...
+d80_hh6,0,1,0,1,...
+d41_hh53,0,1,0,1,...
 ```
+
+**Important**: Each row represents a single household or individual record. The attributes must match the constraints file **in the same order**.
+
+### 3. Groups File (Validation Grouping)
+
+The groups file defines how attributes should be grouped together for validation. This is used to calculate and compare fractions during validation.
+
+#### Format
+```
+heading,group
+attr1,1
+attr2,1
+attr3,2
+attr4,2
+```
+
+#### Column Requirements
+- **First column**: Attribute name (must match header of constraints/microdata)
+- **Second column**: Group number (integer, starting from 1)
+
+#### Example from `artificial_groups.csv`
+```
+heading,group
+location_urban,1
+location_rural,1
+hh_size1,2
+hh_size2,2
+hh_size3,2
+hh_size4,2
+m_0_to_30,3
+f_0_to_30,3
+m_30_to_60,3
+f_30_to_60,3
+m_gt_60,3
+f_gt_60,3
+edu_non,4
+edu_low,4
+edu_middle,4
+edu_high,4
+```
+
+#### Why Grouping Matters
+
+The grouping file is used during validation to calculate fractions **within each group**. This allows you to see how well the synthetic population matches constraints at an aggregate level.
+
+For example, in the artificial dataset:
+
+- **Group 1**: Location (urban/rural) - These should sum to 1.0 when validated
+- **Group 2**: Household size (size1-size4) - These should sum to 1.0
+- **Group 3**: Age/Sex categories - These should sum to 1.0
+- **Group 4**: Education levels - These should sum to 1.0
+
+When COMPASS generates the validation output, it calculates:
+
+```
+synth_fraction = synth_total_for_attr / sum_of_all_attrs_in_group
+constraint_fraction = constraint_total_for_attr / sum_of_all_constraints_in_group
+```
+
+This allows you to compare the **distribution** of attributes within each group, not just the absolute totals.
+
+### Complete Example: Artificial BlockWorld Dataset
+
+The repository includes a test dataset in `data/BlockWorld/`:
+
+```
+data/BlockWorld/
+├── artifical_cencus.csv      # 215 constraint areas
+├── artifical_survey.csv      # ~600 microdata records
+└── artificial_groups.csv     # 4 validation groups
+```
+
+#### Step 1: Verify Column Order
+
+All three files must have attributes in the same order:
+
+| Position | artifical_cencus.csv | artifical_survey.csv | artificial_groups.csv |
+|----------|---------------------|---------------------|----------------------|
+| 1 | area_id | hh_id | heading |
+| 2 | population | location_urban | group |
+| 3 | location_urban | location_rural | (same order as above) |
+| 4 | location_rural | hh_size1 | ... |
+| ... | ... | ... | ... |
+
+**Check**: The attributes after the first column must appear in the SAME order in all files.
+
+#### Step 2: Configure COMPASS
+
+Create a `config.json` file:
+
+```json
+{
+  "constraints": "data/BlockWorld/artifical_cencus.csv",
+  "microdata": "data/BlockWorld/artifical_survey.csv",
+  "groups": "data/BlockWorld/artificial_groups.csv",
+  "output": "results/artificial_synthetic_population.csv",
+  "validate": "results/artificial_synthPopSurvey.csv",
+  "initialTemp": 1000.0,
+  "minTemp": 0.001,
+  "coolingRate": 0.997,
+  "reheatFactor": 0.3,
+  "fitnessThreshold": 0.01,
+  "minImprovement": 0.001,
+  "maxIterations": 500000,
+  "windowSize": 5000,
+  "change": 100000,
+  "distance": "NORM_EUCLIDEAN",
+  "useRandomSeed": "no",
+  "randomSeed": 42
+}
+```
+
+#### Step 3: Run COMPASS
+
+```bash
+./compass_linux_amd64 -f config.json
+```
+
+#### Step 4: Interpret Outputs
+
+**Output 1: ID Mapping** (`artificial_synthetic_population.csv`)
+
+```
+area_id,microdata_id
+d1,P001
+d1,P002
+d1,P003
+...
+d2,P001
+...
+```
+
+**Output 2: Validation Fractions** (`artificial_synthPopSurvey.csv`)
+
+```
+geography_code,variable,synth_fraction,constraint_fraction
+d1,location_urban,0,0
+d1,location_rural,1,1
+d1,hh_size1,0.22,0.22
+d1,hh_size2,0.66,0.66
+d1,hh_size3,0.08,0.08
+d1,hh_size4,0.04,0.04
+...
+```
+
+**Interpreting the Validation Output**:
+
+- For Group 1 (Location), the fractions sum to 1.0 per area
+- A perfect match shows `synth_fraction == constraint_fraction`
+- Discrepancies indicate areas where the synthetic population differs from targets
+
+### Data Preparation Best Practices
+
+#### 1. Ensure Consistent Column Order
+
+```bash
+# Check headers of all files
+head -1 data/BlockWorld/artifical_cencus.csv
+head -1 data/BlockWorld/artifical_survey.csv
+head -1 data/BlockWorld/artificial_groups.csv
+```
+
+The attribute columns should match exactly (after the first column).
+
+#### 2. Handle Zero Constraints
+
+If a constraint value is zero, the microdata must also have zero in that attribute. COMPASS enforces this automatically.
+
+**Example**: If `hh_size4 = 0` for an area, no household with size 4 can be assigned.
+
+#### 3. Validate Data Types
+
+- **Constraints**: Numeric values (integers or floats)
+- **Microdata**: Numeric values (typically 0/1 indicators)
+- **Groups**: Integer group numbers starting from 1
+
+#### 4. Test with Small Datasets First
+
+Start with a subset of areas to test your configuration:
+
+```bash
+# Create a test constraints file with 5 areas
+head -6 artifical_cencus.csv > test_cencus.csv
+```
+
+#### 5. Check for Missing Values
+
+COMPASS expects complete data. Missing values may cause errors.
+
+```bash
+# Check for missing values in CSV files
+awk -F',' '{for(i=1;i<=NF;i++) if($i=="") print "Missing at row "NR" col "i}' artifical_cencus.csv
+```
+
+### Common Data Preparation Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| **Header mismatch error** | Attributes in different order | Reorder columns to match |
+| **No valid microdata found** | Zero constraints mismatch | Check microdata for zero values |
+| **All fitness values are identical** | Groups file missing or wrong | Verify groups file and group numbers |
+| **Validation fractions don't sum to 1** | Incorrect grouping | Check groups file groups related attributes |
+
+### Creating a Groups File
+
+The groups file is crucial for validation. Here's how to create one for your data:
+
+1. **List all attributes** (excluding ID columns)
+2. **Group related attributes** (e.g., all age groups together)
+3. **Assign group numbers** (1, 2, 3, ...)
+
+**Example**: For a dataset with location (urban/rural), age groups, and education levels:
+
+```
+heading,group
+urban,1
+rural,1
+age_0_17,2
+age_18_64,2
+age_65_plus,2
+edu_low,3
+edu_mid,3
+edu_high,3
+```
+
+**Important**: Groups are only used for **validation**. They don't affect the annealing algorithm's fitness calculation, only the output comparison.
+
+### Testing Your Data Preparation
+
+Use the `CheckResults.ipynb` notebook to validate your data:
+
+1. Open `CheckResults.ipynb` in Jupyter
+2. Point it to your groups file and validation output
+3. Visualize the comparison plots
+
+This will help you identify:
+- Which variables are well-matched
+- Which variables need adjustment
+- Whether your grouping makes sense
 
 ---
 
@@ -464,9 +741,9 @@ A Jupyter notebook called `CheckResults.ipynb` is included to visualize COMPASS'
 
 ```json
 {
-  "constraints": "data/BlockLand/artifical_cencus.csv",
-  "microdata": "data/BlockLand/artifical_hh_survay.csv",
-  "groups": "data/BlockLand/artificial_groups.csv",
+  "constraints": "data/BlockWorld/artifical_cencus.csv",
+  "microdata": "data/BlockWorld/artifical_survey.csv",
+  "groups": "data/BlockWorld/artificial_groups.csv",
   "output": "results/artificial_synthetic_population.csv",
   "validate": "results/artificial_synthPopSurvey.csv",
   "initialTemp": 1000.0,
@@ -582,29 +859,25 @@ When `useRandomSeed: "yes"`:
 | Deterministic Mode | ✅ Stable |
 | Python Interface | ✅ Stable |
 | R Interface | ✅ Stable |
-| Linux Build | ✅ Stable  |
-| Windows Build |✅ Stable  |
-| macOS Build | ✅ Stable  |
+| Linux Build | ✅ Stable |
+| Windows Build | ✅ Stable |
+| macOS Build | ✅ Stable |
 
 ---
-
 
 ## Acknowledgments
 
 This project was developed with contributions from:
 
 - **Core Algorithm Development**: Alison Heppenstall, Ricardo Colasanti, Hugh Rice, Andreas Hoehn 
-- **Initial Project Design**: Nik Lomax Alison Heppenstall
-- **Documentation and Code Comments**: Comprehensive documentation, code commenting, and technical writing assistance provided by **AI Assistant** through DeepSeek AI baised on the inital readme and code comments by Ricardo Colasanti
-
+- **Initial Project Design**: Nik Lomax, Alison Heppenstall
+- **Documentation and Code Comments**: Comprehensive documentation, code commenting, and technical writing assistance provided by **AI Assistant** through DeepSeek AI based on the initial README and code comments by Ricardo Colasanti
 
 The simulated annealing implementation, distance metrics, parallel processing architecture, and cross-platform build scripts were documented and commented with the assistance of AI to ensure clarity, maintainability, and usability for researchers and developers.
 
-Thank you to Stephen Clark of School of Geography at the University of Leeds for invaluable feedback
+Thank you to Stephen Clark of School of Geography at the University of Leeds for invaluable feedback.
 
 ---
-
-*Documentation last updated: August 2026*
 
 ## License
 
@@ -612,5 +885,5 @@ This code is part of the COMPASS project. See the main project license for terms
 
 ---
 
-*Documentation last updated for version 0.80*  
+*Documentation last updated: August 2026*  
 *Tool under active development - Parameters and features may change*
