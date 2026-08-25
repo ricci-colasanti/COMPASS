@@ -602,6 +602,8 @@ This project was developed with contributions from:
 
 The simulated annealing implementation, distance metrics, parallel processing architecture, and cross-platform build scripts were documented and commented with the assistance of AI to ensure clarity, maintainability, and usability for researchers and developers.
 
+Thank you to Stephen Clark of School of Geography at the University of Leeds for invaluable feedback
+
 ---
 
 *Documentation last updated: August 2026*
