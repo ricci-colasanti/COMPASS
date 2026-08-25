@@ -1,90 +1,114 @@
-# COMPASS - UK Spatial Synthetic Population Generator  
-**Work in Progress - Not Ready for Production Use**  
+<div align="center">
+  <img src="img/COMPASS.png" alt="COMPASS Logo" width="400"/>
+</div>
 
-*This is a research/experimental project for generating UK spatial synthetic populations.  
-The code is under active development and not yet intended for public release or real-world use.*
+# COMPASS - Spatial Synthetic Population Generator
+
+**Work in Progress - Not Ready for Production Use**
+
+*This is a research/experimental project for generating spatial synthetic populations. The code is under active development and not yet intended for public release or real-world use.*
 
 ---
 
 ## Overview
 
-A Go-based tool for generating synthetic populations by combining UK census data with Understanding Society survey data using simulated annealing optimization. Creates spatially detailed synthetic populations that match statistical constraints from census data while preserving individual characteristics from survey microdata.
+COMPASS is a Go-based tool for generating synthetic populations by combining census data with survey microdata using simulated annealing optimization. It creates spatially detailed synthetic populations that match statistical constraints from census data while preserving individual characteristics from survey microdata.
 
-## Features
+### How It Works
 
-- **Parallel processing** - Utilizes all CPU cores for fast population generation
-- **Multiple distance metrics** - KL Divergence, Chi-Squared, Euclidean, and more
-- **Simulated annealing** - Intelligent optimization algorithm to match constraints
-- **Validation outputs** - Generates comparison files to verify constraint matching
-- **Multi-language API** - Call from Python, R, or directly via command line
-- **UK-focused** - Designed for UK census geography and Understanding Society data
+The tool uses **simulated annealing**, a probabilistic optimization algorithm, to select a subset of microdata records for each geographic area:
+
+1. **Input Loading**: Reads constraint data (census totals), microdata (survey records), and geographical groupings
+2. **Initialization**: Creates a random population by sampling microdata records for each area
+3. **Optimization Loop**:
+   - Proposes changes by swapping one microdata record with another
+   - Accepts or rejects changes based on fitness improvement and current temperature
+   - Gradually cools the temperature to converge on a good solution
+   - Reheats if progress stalls to escape local optima
+4. **Output Generation**: Writes final population mappings and validation data
+
+### Key Features
+
+- **Parallel Processing**: Utilizes all CPU cores for fast population generation
+- **Multiple Distance Metrics**: KL Divergence, Chi-Squared, Euclidean, Cosine, MSE, and more
+- **Deterministic Mode**: Reproducible results with fixed random seeds
+- **Adaptive Thresholds**: Automatically adjusts convergence criteria based on the chosen metric
+- **Multi-Language API**: Call from Python, R, or directly via command line
+- **UK-Focused Design**: Optimized for UK census geography and Understanding Society data
+
+---
 
 ## Installation
-Pre-compiled Binaries
+
+### Pre-compiled Binaries
 
 Pre-compiled executables are available for:
 
-    Linux (64-bit): Included in the repository
+| Platform | Status | Location |
+|----------|--------|----------|
+| Linux (64-bit) | ✅ Available | Included in repository |
+| Windows | 🚧 Coming soon | Build from source |
+| macOS | 🚧 Coming soon | Build from source |
 
-    Windows: Coming soon (currently build from source)
+### Prerequisites (Building from Source)
 
-    macOS: Coming soon (currently build from source)
+- **Go 1.18+** (required for building)
+- **Python 3.6+** (optional, for Python interface)
+- **R 4.0+ with jsonlite package** (optional, for R interface)
 
-Download the appropriate binary for your system or build from source.
-Prerequisites (for Building from Source)
+### Quick Start (Using Pre-compiled Binary)
 
-    Go 1.18+ (only required if building from source)
-
-    Python 3.6+ (for Python interface - optional)
-
-    R 4.0+ with jsonlite package (for R interface - optional)
-
-Quick Start (Using Pre-compiled Binary)
-
-    For Linux users (64-bit):
-    bash
-
+```bash
 # Download the Linux binary
 chmod +x compass
 
 # Test it works
-./compass --help
+./compass -f config.json
 
-# Building from Source
+# Or pipe JSON directly
+echo '{"constraints":"data.csv","microdata":"micro.csv"}' | ./compass
+```
 
-If pre-compiled binaries don't work for your system, or you want the latest development version:
-bash
+### Building from Source
 
+```bash
 # Clone the repository
 git clone <repository-url>
 cd compass
 
 # Build the binary
-go build -o compass main.go
+go build -o compass .
 
 # Make it executable (Linux/macOS)
 chmod +x compass
 
 # Test the build
-./compass --version
+./compass -f config.json
+```
 
-Note for Windows users: When building from source on Windows, the output will be compass.exe. Use go build -o compass.exe main.go and run with compass.exe instead of ./compass.
+**Note for Windows users**: When building from source, the output will be `compass.exe`. Run with `compass.exe -f config.json`.
+
+---
 
 ## Usage
 
-### Command Line (Direct JSON Input)
+### Command Line Interface
+
+The tool accepts JSON configuration either from a file or via stdin:
+
 ```bash
-# Method 1: Pipe JSON to stdin
+# Method 1: JSON file input
+./compass -f config.json
+
+# Method 2: Pipe JSON to stdin
 echo '{"constraints":"data.csv","microdata":"micro.csv"}' | ./compass
 
-# Method 2: JSON file input
-./compass < config.json
-
-# Method 3: Direct parameters (simple mode)
-./compass --constraints data.csv --microdata micro.csv --output results.csv
+# Method 3: Run with GUI (placeholder)
+./compass -g
 ```
 
 ### Python Interface
+
 ```python
 #!/usr/bin/env python3
 import json
@@ -174,6 +198,7 @@ if __name__ == "__main__":
 ```
 
 ### R Interface
+
 ```r
 # R script: run_compass.R
 library(jsonlite)
@@ -255,12 +280,12 @@ if (!is.null(result$log)) {
 }
 ```
 
-## Check results
-Included in the files is a Jupyter notebook called CheckResults.ipynb. This visualizes COMPASS’s performance by plotting the predicted fractional values for each grouped variable alongside the corresponding synthetic fractions generated by COMPASS. It needs a groups file and a results file. In the demo these are "data/BlockWorld/artificial_groups.csv" and "results/artificial_synthPopSurvey.csv.
+---
 
-## Configuration Parameters
+## Configuration
 
 ### Required Parameters
+
 | Parameter | Type | Description | Example |
 |-----------|------|-------------|---------|
 | `constraints` | string | Path to census constraint CSV file | `"data/census2021.csv"` |
@@ -269,64 +294,106 @@ Included in the files is a Jupyter notebook called CheckResults.ipynb. This visu
 | `output` | string | Path for output synthetic population CSV | `"results/population.csv"` |
 
 ### Optional Parameters
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `validate` | `""` | Path for validation output CSV (empty = no validation) |
-| `initialTemp` | 1000.0 | Starting temperature for simulated annealing |
-| `minTemp` | 0.001 | Minimum temperature before stopping |
-| `coolingRate` | 0.997 | Temperature reduction factor per iteration |
-| `reheatFactor` | 0.3 | Temperature increase when stagnation detected |
-| `fitnessThreshold` | 0.01 | Target fitness value for early stopping |
-| `minImprovement` | 0.001 | Minimum improvement threshold |
-| `maxIterations` | 500000 | Maximum number of iterations |
-| `windowSize` | 5000 | Iteration window for improvement checking |
-| `change` | 100000 | Maximum accepted changes before stopping |
+| `initialTemp` | `1000.0` | Starting temperature for simulated annealing |
+| `minTemp` | `0.001` | Minimum temperature before stopping |
+| `coolingRate` | `0.997` | Temperature reduction factor per iteration |
+| `reheatFactor` | `0.3` | Temperature increase when stagnation detected |
+| `fitnessThreshold` | `0.01` | Target fitness value for early stopping |
+| `minImprovement` | `0.001` | Minimum improvement threshold |
+| `maxIterations` | `500000` | Maximum number of iterations per area |
+| `windowSize` | `5000` | Iteration window for improvement checking |
+| `change` | `100000` | Maximum rejected changes before stopping |
 | `distance` | `"NORM_EUCLIDEAN"` | Distance metric (see below) |
 | `useRandomSeed` | `"no"` | Use fixed random seed (`"yes"`/`"no"`) |
-| `randomSeed` | 42 | Random seed if `useRandomSeed="yes"` |
+| `randomSeed` | `42` | Random seed if `useRandomSeed="yes"` |
 
-### **Distance Metric** 
-- `"EUCLIDEAN"`: Standard Euclidean distance
-- `"NORM_EUCLIDEAN"`: Normalized Euclidean (default, good for mixed scales)
-- `"COSINE"`: Cosine similarity (angle-based)
-- `"MANHATTEN"`: Manhattan (taxicab) distance
-- `"MSE"`: Mean Squared Error
-- `"KLDivergence"`: Kullback-Leibler Divergence
+### Input File Formats
 
+#### Constraints CSV
+```
+id,total,var1,var2,var3,...
+A001,100,25,40,35,...
+A002,150,60,50,40,...
+```
 
+#### Microdata CSV
+```
+id,var1,var2,var3,...
+P001,1,0,1,...
+P002,0,1,1,...
+```
 
+#### Groups CSV
+```
+variable,group
+var1,1
+var2,2
+var3,1
+```
 
-#### `distance`: "NORM_EUCLIDEAN"
-**What it does**: How to measure difference between target and current solution
-**Behavior impact**:
+---
 
-**"EUCLIDEAN"** - Standard distance:
-- Good for: Well-scaled data, physical distances
-- Watch out: Large-value attributes dominate
+## Distance Metrics
 
-**"NORM_EUCLIDEAN"** - Normalized by target values:
-- Good for: Mixed-scale attributes, percentage differences
-- Watch out: Sensitive to near-zero constraints
+The `distance` parameter determines how the algorithm measures the difference between the synthetic population and the constraints.
 
-**"COSINE"** - Angle between vectors:  
-- Good for: Direction similarity, high-dimensional spaces
-- Watch out: Ignores magnitude differences
+| Metric | Description | Best Used For |
+|--------|-------------|---------------|
+| **`EUCLIDEAN`** | Standard Euclidean distance (L2 norm) | Well-scaled data, physical distances |
+| **`NORM_EUCLIDEAN`** | Normalized by target values | Mixed-scale attributes, percentage differences |
+| **`COSINE`** | Angle between vectors | High-dimensional spaces, direction similarity |
+| **`MANHATTEN`** | Sum of absolute differences (L1 norm) | Grid-like problems, robust to outliers |
+| **`MSE`** | Mean Squared Error | Statistical fitting, regression problems |
+| **`KLDivergence`** | Kullback-Leibler divergence | Probability distributions, information loss |
+| **`CHI_SQUARED`** | Chi-squared distance | Goodness of fit comparisons |
+| **`JSDIVERGENCE`** | Jensen-Shannon divergence | Symmetric probability distribution comparison |
 
-**"MANHATTEN"** - Sum of absolute differences:
-- Good for: Grid-like problems, robust to outliers
-- Watch out: Less sensitive to large errors
+### Metric Behavior
 
-**"MSE"** - Mean Squared Error:
-- Good for: Statistical fitting, regression problems
-- Watch out: Very small values, needs careful thresholds
+| Metric | Scale | Sensitivity | Best For |
+|--------|-------|-------------|----------|
+| EUCLIDEAN | Large values dominate | High for large errors | Physical measurements |
+| NORM_EUCLIDEAN | Scale-invariant | Sensitive to near-zero | Mixed-scale data |
+| COSINE | 0-2 range | Direction-based | High-dimensional data |
+| MANHATTEN | Sum of absolute differences | Robust to outliers | Sparse data |
+| MSE | Squared errors | Very sensitive to outliers | Statistical fitting |
+| KLDivergence | Information-theoretic | Requires positive values | Distribution matching |
 
-**"KLDivergence"** - Information theory distance:
-- Good for: Probability distributions, information loss
-- Watch out: Asymmetric, requires positive values
+---
 
-## **Parameter Interplay Examples**
+## Simulated Annealing Parameter Guide
 
-### **Quick Convergence Setup**
+### Temperature Parameters
+
+| Parameter | Recommended Range | Effect |
+|-----------|-------------------|--------|
+| `initialTemp` | 500-2000 | Higher = more exploration early on |
+| `minTemp` | 0.0001-0.01 | Lower = more precise convergence |
+| `coolingRate` | 0.99-0.999 | Higher = slower cooling, better solutions |
+
+### Convergence Control
+
+| Parameter | Effect |
+|-----------|--------|
+| `fitnessThreshold` | Stop early if fitness target is met |
+| `minImprovement` | Stop if improvement falls below this |
+| `maxIterations` | Hard limit on iterations |
+
+### Stagnation Handling
+
+| Parameter | Effect |
+|-----------|--------|
+| `reheatFactor` | Percentage increase when stuck (0.3 = 30%) |
+| `windowSize` | How many iterations to check for improvement |
+| `change` | Stop if too many rejections in a row |
+
+### Parameter Interplay Examples
+
+**Quick Convergence Setup** (Fast results, "good enough" acceptable):
 ```json
 {
   "initialTemp": 500.0,
@@ -336,9 +403,8 @@ Included in the files is a Jupyter notebook called CheckResults.ipynb. This visu
   "reheatFactor": 0.5
 }
 ```
-*Use when: You need fast results and "good enough" is acceptable*
 
-### **Thorough Search Setup**  
+**Thorough Search Setup** (Best possible solution, more time):
 ```json
 {
   "initialTemp": 2000.0,
@@ -348,9 +414,8 @@ Included in the files is a Jupyter notebook called CheckResults.ipynb. This visu
   "reheatFactor": 0.2
 }
 ```
-*Use when: You need the best possible solution and have time*
 
-### **Exploration-Focused Setup**
+**Exploration-Focused Setup** (Escape local optima):
 ```json
 {
   "initialTemp": 5000.0,
@@ -359,127 +424,193 @@ Included in the files is a Jupyter notebook called CheckResults.ipynb. This visu
   "windowSize": 10000
 }
 ```
+
+---
+
 ## Output Files
 
 ### Primary Outputs
-1. **Synthetic Population CSV** (`output` parameter)
-   - Maps geographical areas to synthetic individuals
-   - Format: `area_id,microdata_id` rows
 
-2. **Fraction Comparisons CSV** (if validation enabled)
+1. **Synthetic Population CSV** (`output` parameter)
+   - Maps geographical areas to synthetic individual IDs
+   - Format: `area_id,microdata_id`
+
+2. **Fraction Comparisons CSV** (`validate` parameter)
    - Shows how well constraints are matched
    - Format: `geography_code,variable,synth_fraction,constraint_fraction`
 
 ### Execution Results
+
 The tool returns a JSON object with:
 ```json
 {
   "status": "ok" | "error",
   "message": "Description of result",
-  "iterations": 12345,
-  "final_fitness": 0.005,
   "log": ["Line 1", "Line 2", ...]
 }
 ```
 
-## Simulated Annealing Parameters Guide
+---
 
-### Temperature Parameters 🌡️
+## Validation and Visualization
 
-| Parameter | Default | Recommended Range | Description |
-|-----------|---------|-------------------|-------------|
-| `initialTemp` | 1000.0 | 500-2000 | Starting temperature for annealing |
-| `minTemp` | 0.001 | 0.0001-0.01 | Minimum temperature before stopping |
-| `coolingRate` | 0.997 | 0.99-0.999 | Temperature reduction per iteration |
+A Jupyter notebook called `CheckResults.ipynb` is included to visualize COMPASS's performance. It plots the predicted fractional values for each grouped variable alongside the corresponding synthetic fractions.
 
-### Convergence Control 
+**Requirements:**
+- Groups file (e.g., `data/BlockWorld/artificial_groups.csv`)
+- Results file (e.g., `results/artificial_synthPopSurvey.csv`)
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `fitnessThreshold` | 0.01 | Stop when fitness reaches this value |
-| `minImprovement` | 0.001 | Minimum improvement over window to continue |
-| `maxIterations` | 500000 | Absolute maximum iteration limit |
+---
 
-### Stagnation Handling 
+## Complete Example Configuration
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `reheatFactor` | 0.3 | Temperature increase when stagnation detected |
-| `windowSize` | 5000 | Iterations to check for improvement |
-| `change` | 100000 | Maximum accepted changes before stopping |
-
-## Example Configurations
-
+```json
 {
-  "constraints" : "data/BlockLand/artifical_cencus.csv",
-  "microdata"   : "data/BlockLand/artifical_hh_survay.csv",
-  "groups"      : "data/BlockLand/artificial_groups.csv",
-  "output"      : "results/artificial_synthetic_population.csv",
-  "validate"    : "results/artificial_synthPopSurvey.csv",
-  "initialTemp"      : 1000.0,
-  "minTemp"          : 0.001,
-  "coolingRate"      : 0.997,
-  "reheatFactor"     : 0.3,
-  "fitnessThreshold" : 0.01,
-  "minImprovement"   : 0.001,
-  "maxIterations"    : 500000,
-  "windowSize"       : 5000,
-  "change"           : 100000,
-  "distance"         : "NORM_EUCLIDEAN",
-  "useRandomSeed"    : "no",
-  "randomSeed"       : 42
+  "constraints": "data/BlockLand/artifical_cencus.csv",
+  "microdata": "data/BlockLand/artifical_hh_survay.csv",
+  "groups": "data/BlockLand/artificial_groups.csv",
+  "output": "results/artificial_synthetic_population.csv",
+  "validate": "results/artificial_synthPopSurvey.csv",
+  "initialTemp": 1000.0,
+  "minTemp": 0.001,
+  "coolingRate": 0.997,
+  "reheatFactor": 0.3,
+  "fitnessThreshold": 0.01,
+  "minImprovement": 0.001,
+  "maxIterations": 500000,
+  "windowSize": 5000,
+  "change": 100000,
+  "distance": "NORM_EUCLIDEAN",
+  "useRandomSeed": "no",
+  "randomSeed": 42
 }
-
 ```
+
+---
 
 ## Troubleshooting
 
 ### Common Issues
 
-**Error**: "Failed to read constraints CSV"
-- Check file path exists and is readable
-- Verify CSV format matches expected structure
-- Ensure proper comma separation and quoting
-
-**Error**: "No improvement after X iterations"
-- Increase `reheatFactor` (0.5+)
-- Increase `initialTemp` (2000+)
-- Try different `distance` metric
-
-**Issue**: Running very slowly
-- Decrease `maxIterations` (100000)
-- Increase `fitnessThreshold` (0.05)
-- Reduce data size for testing
-
-**Issue**: Poor constraint matching
-- Decrease `coolingRate` (0.99)
-- Increase `maxIterations` (500000+)
-- Use `"NORM_EUCLIDEAN"` distance metric
+| Issue | Likely Cause | Solution |
+|-------|--------------|----------|
+| **"Failed to read constraints CSV"** | File path incorrect or format invalid | Check file exists, verify CSV format |
+| **"Header mismatch"** | CSV column order differs | Ensure constraints, microdata, and groups headers align |
+| **"No valid microdata found"** | Constraints don't match any records | Check zero-constraint rules, adjust constraints |
+| **No improvement after many iterations** | Stuck in local optimum | Increase `reheatFactor` (0.5+), increase `initialTemp` |
+| **Slow execution** | Too many iterations or large data | Decrease `maxIterations`, increase `fitnessThreshold` |
+| **Poor constraint matching** | Cooling too fast | Decrease `coolingRate` (0.99), increase `maxIterations` |
 
 ### Log Messages
 
-- `"INFO: Loaded X constraint areas"` - Normal loading message
-- `"WARN: Temperature reheated from X to Y"` - Stagnation detected and handled
-- `"ERROR: Failed to read file"` - File I/O issue, check paths and permissions
-- `"STATUS: Converged after X iterations"` - Successful completion
+| Message | Meaning |
+|---------|---------|
+| `Loaded X constraint areas` | Successfully loaded input data |
+| `Temperature reheated from X to Y` | Stagnation detected, reheating to escape local optimum |
+| `Converged with fitness X <= threshold Y` | Successfully achieved target fitness |
+| `No valid microdata found` | No records match zero-constraint rules |
 
-## How It Works
+### Performance Tips
 
-1. **Input Loading**: Reads constraint data, microdata, and geographical groupings
-2. **Initialization**: Creates random population matching microdata distributions
-3. **Annealing Loop**: Iteratively improves population to match constraints:
-   - Proposes changes (swapping individuals)
-   - Accepts/rejects based on fitness improvement and temperature
-   - Cools temperature over time
-   - Reheats if stuck in local minimum
-4. **Output Generation**: Writes final population and optional validation data
+1. **Start with smaller data**: Test with a subset of constraints/microdata
+2. **Increase fitness threshold**: Higher threshold = faster convergence
+3. **Reduce max iterations**: Lower for testing, higher for production
+4. **Use appropriate distance metric**: `NORM_EUCLIDEAN` is good for mixed scales
+5. **Enable deterministic mode**: Set `useRandomSeed: "yes"` for reproducible testing
+
+---
+
+## How It Works (Detailed)
+
+### 1. Input Validation
+All inputs are validated once at startup:
+- Constraint values must match microdata dimensions
+- Zero constraints enforced (if constraint is 0, microdata must be 0)
+- Weights length must match constraint length
+
+### 2. Population Initialization
+For each area:
+- Calculate population size (rounded from constraint.Total)
+- Identify valid microdata records (satisfy zero constraints)
+- Randomly select N records with replacement
+- Compute initial aggregate totals
+
+### 3. Simulated Annealing Optimization
+
+For each iteration:
+1. **Propose Change**: Randomly select:
+   - A position in the population to replace
+   - A valid microdata record to insert
+2. **Evaluate**: Compute new aggregate totals and fitness
+3. **Metropolis Criterion**:
+   - If improvement (delta < 0): Accept
+   - If equal (delta == 0): Accept (explore flat terrain)
+   - If worse (delta > 0): Accept with probability e^(-delta/temp)
+4. **Temperature Schedule**:
+   - Cool: temp *= coolingRate
+   - Reheat: temp *= (1 + reheatFactor) if stagnation detected
+5. **Stagnation Detection**:
+   - Monitor relative improvement over rolling window
+   - Reheat if improvement falls below threshold
+   - Exit if complete stagnation
+
+### 4. Convergence Criteria
+
+The algorithm stops when any of these are true:
+- Best fitness ≤ fitnessThreshold
+- maxIterations reached
+- temperature ≤ minTemp
+- changes ≤ 0 (all moves rejected)
+- complete stagnation detected
+
+### 5. Deterministic Mode
+
+When `useRandomSeed: "yes"`:
+- Each area gets a deterministic RNG seeded by `hash(areaID) + randomSeed`
+- Results are reproducible across runs regardless of worker scheduling
+- Uses FNV-1a hash for stable area ID hashing
+
+---
 
 ## Development Status
 
 **Version**: 0.80 (Experimental)
 
+| Component | Status |
+|-----------|--------|
+| Core SA Algorithm | ✅ Stable |
+| Distance Metrics | ✅ Complete |
+| Parallel Processing | ✅ Stable |
+| Deterministic Mode | ✅ Stable |
+| Python Interface | ✅ Stable |
+| R Interface | ✅ Stable |
+| Linux Build | ✅ Stable  |
+| Windows Build |✅ Stable  |
+| macOS Build | ✅ Stable  |
 
 ---
 
-*This documentation last updated for version 0.41*  
+
+## Acknowledgments
+
+This project was developed with contributions from:
+
+- **Core Algorithm Development**: Alison Heppenstall, Ricardo Colasanti, Hugh Rice, Andreas Hoehn 
+- **Initial Project Design**: Nik Lomax Alison Heppenstall
+- **Documentation and Code Comments**: Comprehensive documentation, code commenting, and technical writing assistance provided by **AI Assistant** through DeepSeek AI.
+
+
+The simulated annealing implementation, distance metrics, parallel processing architecture, and cross-platform build scripts were documented and commented with the assistance of AI to ensure clarity, maintainability, and usability for researchers and developers.
+
+---
+
+*Documentation last updated: August 2026*
+
+## License
+
+This code is part of the COMPASS project. See the main project license for terms of use.
+
+---
+
+*Documentation last updated for version 0.80*  
 *Tool under active development - Parameters and features may change*
