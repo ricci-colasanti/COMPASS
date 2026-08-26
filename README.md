@@ -4,9 +4,8 @@
 
 # COMPASS - Spatial Synthetic Population Generator
 
-**Work in Progress - Not Ready for Production Use**
+**The code is under active development and updates are published on a rolling ad-hoc basis**
 
-*This is a research/experimental project for generating spatial synthetic populations. The code is under active development and not yet intended for public release or real-world use. But is getting there!*
 
 ---
 
