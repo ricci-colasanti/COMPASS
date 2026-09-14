@@ -6,7 +6,6 @@
 
 **The code is under active development and updates are published on a rolling ad-hoc basis**
 
-
 ---
 
 ## Overview
@@ -34,6 +33,17 @@ The tool uses **simulated annealing**, a probabilistic optimization algorithm, t
 - **Adaptive Thresholds**: Automatically adjusts convergence criteria based on the chosen metric
 - **Multi-Language API**: Call from Python, R, or directly via command line
 - **UK-Focused Design**: Optimized for UK census geography and Understanding Society data
+
+---
+
+## Documentation
+
+For detailed documentation, please refer to the following resources:
+
+| Document | Description |
+|----------|-------------|
+| **[Programming Tutorial](programming_tutorial.md)** | Complete walkthrough with runnable examples explaining the Simulated Annealing algorithm, distance metrics, and core concepts. Perfect for understanding how the code works. |
+| **[Full Code Description](Full_code_description.md)** | Comprehensive technical documentation covering every function, constant, and design pattern in the simulated annealing engine. Ideal for developers wanting to modify or extend the code. |
 
 ---
 
@@ -759,31 +769,52 @@ The `distance` parameter determines how the algorithm measures the difference be
 ```json
 {
   "initialTemp": 500.0,
+  "minTemp": 0.01,
   "coolingRate": 0.99,
+  "reheatFactor": 0.5,
   "fitnessThreshold": 0.05,
   "maxIterations": 100000,
-  "reheatFactor": 0.5
+  "windowSize": 500,
+  "change": 5000,
+  "distance": "NORM_EUCLIDEAN",
+  "useRandomSeed": "yes",
+  "randomSeed": 42
 }
 ```
 
 **Thorough Search Setup** (Best possible solution, more time):
 ```json
 {
+  "method": "SIMULATED_ANNEALING",
   "initialTemp": 2000.0,
-  "coolingRate": 0.998, 
+  "minTemp": 0.0001,
+  "coolingRate": 0.998,
+  "reheatFactor": 0.2,
   "fitnessThreshold": 0.001,
   "maxIterations": 2000000,
-  "reheatFactor": 0.2
+  "windowSize": 5000,
+  "change": 100000,
+  "distance": "NORM_EUCLIDEAN",
+  "useRandomSeed": "yes",
+  "randomSeed": 42
 }
 ```
 
 **Exploration-Focused Setup** (Escape local optima):
 ```json
 {
+  "method": "SIMULATED_ANNEALING",
   "initialTemp": 5000.0,
+  "minTemp": 0.001,
   "coolingRate": 0.999,
   "reheatFactor": 0.8,
-  "windowSize": 10000
+  "fitnessThreshold": 0.001,
+  "maxIterations": 5000000,
+  "windowSize": 10000,
+  "change": 200000,
+  "distance": "NORM_EUCLIDEAN",
+  "useRandomSeed": "yes",
+  "randomSeed": 42
 }
 ```
 
@@ -984,4 +1015,3 @@ This code is part of the COMPASS project. See the main project license for terms
 
 *Documentation last updated: August 2026*  
 *Tool under active development - Parameters and features may change*
-
