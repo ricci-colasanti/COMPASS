@@ -975,7 +975,7 @@ When `useRandomSeed: "yes"`:
 
 ## Development Status
 
-**Version**: 0.80 (Experimental)
+**Version**: 1.6
 
 | Component | Status |
 |-----------|--------|
