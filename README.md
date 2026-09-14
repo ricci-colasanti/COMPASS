@@ -785,7 +785,6 @@ The `distance` parameter determines how the algorithm measures the difference be
 **Thorough Search Setup** (Best possible solution, more time):
 ```json
 {
-  "method": "SIMULATED_ANNEALING",
   "initialTemp": 2000.0,
   "minTemp": 0.0001,
   "coolingRate": 0.998,
@@ -803,7 +802,6 @@ The `distance` parameter determines how the algorithm measures the difference be
 **Exploration-Focused Setup** (Escape local optima):
 ```json
 {
-  "method": "SIMULATED_ANNEALING",
   "initialTemp": 5000.0,
   "minTemp": 0.001,
   "coolingRate": 0.999,
